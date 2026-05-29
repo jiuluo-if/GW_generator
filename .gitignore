@@ -1,0 +1,53 @@
+# Python 缓存
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+*.egg
+.pytest_cache/
+.coverage
+
+# 虚拟环境
+venv/
+env/
+.venv/
+ENV/
+
+# 生成的数据集目录（较大且可重现，不必上传）
+test_enhanced/
+tiny_dataset*/
+mixed_test/
+gw_yolo_*/
+*.png
+*.jpg
+*.npy
+
+# 真实数据目录（可包含敏感/大文件，建议忽略）
+real_chirps/
+npy/
+gravityspy_timeseries/
+*.gwf
+*.hdf5
+
+# 临时调试文件
+debug_*.png
+debug_*.npy
+temp_*
+
+# IDE 配置文件
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 日志和元数据
+metadata.json
+*.log
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 备份文件
+*.bak
+*.orig

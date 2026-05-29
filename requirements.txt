@@ -1,0 +1,11 @@
+numpy>=1.23
+scipy>=1.10
+matplotlib>=3.6
+pillow>=9.0
+scikit-image>=0.20
+tqdm>=4.65
+pyyaml>=6.0
+pycbc>=2.3.0           # CBC waveform generation
+gwpy>=3.0.4            # Q-transform & timeseries
+lalsuite               # PyCBC backend
+h5py>=3.8              # for reading GravitySpy hdf5 dumps (optional)
