@@ -1,3 +1,4 @@
+# Core scientific computing
 numpy>=1.23
 scipy>=1.10
 matplotlib>=3.6
@@ -5,7 +6,17 @@ pillow>=9.0
 scikit-image>=0.20
 tqdm>=4.65
 pyyaml>=6.0
-pycbc>=2.3.0           # CBC waveform generation
-gwpy>=3.0.4            # Q-transform & timeseries
-lalsuite               # PyCBC backend
-h5py>=3.8              # for reading GravitySpy hdf5 dumps (optional)
+
+# Gravitational-wave specific
+pycbc>=2.3.0
+gwpy>=3.0.4
+gwosc>=0.7.0          # 用于下载真实事件数据
+h5py>=3.8             # 处理 HDF5 文件（可选）
+
+# HTTP requests (used by some download scripts)
+requests>=2.28
+
+# LALSuite is required by pycbc and gwpy; it is best installed via conda:
+# conda install -c conda-forge lalsuite
+# If using pip, you may need to install system dependencies; this line is left as a placeholder.
+# lalsuite

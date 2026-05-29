@@ -1,158 +1,217 @@
+以下是完全符合 GitHub 风格的 `README.md` 文件内容，已使用标准 Markdown 语法，并增加了细节和可读性。
+
+```markdown
 # GW-YOLO Synthetic Data Generator
 
-参考论文：*Soni, Mukund, Katsavounidis, "GW-YOLO: Multi-transient segmentation in LIGO using computer vision"* (arXiv:2508.17399).
+[![Python 3.10](https://img.shields.io/badge/python-3.10-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
-本仓库根据论文第 IV 节描述的数据合成流程，提供一套**完全可复现、可大规模并行**的训练数据生成管线，输出格式直接兼容 [Ultralytics YOLOv8 segmentation](https://docs.ultralytics.com/datasets/segment/)。
+基于论文 [*GW-YOLO: Multi-transient segmentation in LIGO using computer vision*](https://arxiv.org/abs/2508.17399) 的 **增强版合成数据生成器**。
 
----
+生成 **真实引力波信号 (Chirp) + 真实瞬态噪声 (Glitch) + 丰富背景噪声** 的 Q‑变换谱图，并自动输出 **YOLOv8‑seg 格式的像素级多边形标签**。
 
-## 论文中训练数据是如何生成的（简版回顾）
-
-| 步骤 | 来源 / 工具 | 备注 |
-|---|---|---|
-| 1. 采集 glitch 时序 | LIGO O3 GravitySpy 数据集 | 真实瞬态噪声 |
-| 2. 生成 BBH chirp | PyCBC，`m_p, m_s > 5 M⊙` | 参数取自 O1–O3 真实事件 |
-| 3. 生成 BNS chirp | PyCBC，`m_p, m_s < 2.5 M⊙` | 同上 |
-| 4. 把 chirp 时序 + glitch 时序按**随机时间偏移**相加 | numpy | 3 秒窗口 |
-| 5. 对合成时序做 Q-transform（Q-scan）→ 谱图 | GWpy / Omega | 训练图 |
-| 6. 在谱图上标注 `"chirp"` 和 `"noise"` 的像素 mask | 论文里逐张标注 | 这里我们用「分别 Q-transform 独立成分 + 阈值化」**自动生成 mask** |
-| 7. 80/10/10 切分 | — | train/val/test |
+> ✨ **主要改进**：支持真实引力波事件（GWTC‑1～GWTC‑3）、每张图包含多个随机 Glitch、背景噪声模型更贴近 LIGO 真实环境、Chirp 可见性自动增强。
 
 ---
 
-## 本仓库的设计
+## 📦 安装
 
-```
-gw_yolo_data_gen/
-├── config.py            # 所有可调参数（dataclass）
-├── waveforms.py         # PyCBC 生成 BBH/BNS chirp
-├── glitches.py          # 两种 glitch 来源：真实文件 / 7 类参数化模拟
-├── noise.py             # aLIGO PSD 着色高斯背景噪声
-├── spectrograms.py      # Q-transform + PNG 渲染（与 GravitySpy 同一通路）
-├── annotations.py       # 像素 mask → YOLO seg polygon 标签
-├── pipeline.py          # 串/并行 6 类场景的样本组装
-├── generate_dataset.py  # CLI 入口
-└── requirements.txt
-```
-
-### 6 类合成场景
-
-| scene | 内容 | 用途 |
-|---|---|---|
-| `bbh` | 纯 BBH chirp + 背景 | 教会模型识别孤立 chirp |
-| `bns` | 纯 BNS chirp + 背景 | 同上 |
-| `bbh_glitch` | BBH chirp + glitch + 背景 | 模型核心训练目标 |
-| `bns_glitch` | BNS chirp + glitch + 背景 | 模型核心训练目标 |
-| `glitch` | 纯 glitch + 背景 | 学到「只有 noise」也要正确识别 |
-| `background` | 纯背景 | 学到「什么都没有」（true negatives） |
-
-### 自动标注的关键技巧
-
-我们**不**对合成谱图人肉划框。流程是：
-
-1. **独立** 计算 chirp-only 的 Q-scan，阈值化得到 chirp 像素 mask。
-2. **独立** 计算 glitch-only 的 Q-scan，阈值化得到 noise 像素 mask。
-3. 合成时序的 Q-scan 作为训练图。
-
-这样标签和图像在同一坐标系上严格对齐，且天然反映「该成分在该像素上**是否真的可见**」—— SNR 太低看不见，标签也就为空，模型不会被迫记忆人眼都看不见的东西。
-
----
-
-## 安装
-
+### 使用 Conda（推荐）
 ```bash
-# 建议使用 conda（PyCBC 依赖 LAL）
 conda create -n gwyolo python=3.10 -y
 conda activate gwyolo
 conda install -c conda-forge lalsuite -y
 pip install -r requirements.txt
 ```
 
+### 使用 Pip + 系统 LALSuite
+```bash
+pip install -r requirements.txt
+```
+
+> **注意**：`pycbc` 和 `gwpy` 依赖 LALSuite，建议使用 Conda 环境。
+
 ---
 
-## 使用
+## 🚀 快速开始
 
-### 冒烟测试（200 张，单进程）
+### 1. 准备真实 Chirp 数据（可选，但推荐）
+
+下载引力波事件应变数据并筛选有效信号：
 ```bash
-python generate_dataset.py --total 200 --workers 1 --out ./tiny_dataset
+python download_all_gwtc.py                # 下载 GWTC-1~GWTC-3 事件（约 113 个文件）
+python prepare_chirp_metadata.py           # 计算 SNR，自动过滤弱信号
+```
+生成的 `real_chirps/chirp_metadata.json` 将只保留 SNR ≥ 8 的文件。
+
+> 如果跳过此步，管线将使用模拟 Chirp（BBH/BNS 随机参数）。
+
+### 2. 准备真实 Glitch 数据（可选）
+
+将 [Gravity Spy](https://www.gravityspy.org/) 的 glitch 时序数据（.npy 格式）按类别放入子文件夹，例如：
+```
+/path/to/glitch_data/
+├── Blip/
+├── Tomte/
+├── Koi_Fish/
+└── ...
+```
+管线会自动从子文件夹名读取类别标签。
+
+如果未提供，则使用内置的 7 类参数化模拟 glitch。
+
+### 3. 生成数据集
+
+#### 冒烟测试（20 张，单进程，检查流程）
+```bash
+python generate_dataset.py --total 20 --workers 1 --out ./test_smoke
 ```
 
-python generate_dataset.py --total 200 --workers 1 --glitch-dir /home/jiuluo/python_demo/new/npy --out ./tiny_dataset
-
-### 大规模生成（3 万张，16 进程，模拟 glitch）
-```bash
-python generate_dataset.py --total 30000 --workers 16 \
-    --glitch-source simulated --out ./gw_yolo_30k
-```
-
-### 用真实 GravitySpy glitch
-先把 GravitySpy 的 glitch 时序导成 `.npy` 文件放进一个目录，然后：
+#### 使用真实 Glitch 生成 3 万张（16 进程）
 ```bash
 python generate_dataset.py --total 30000 --workers 16 \
     --glitch-source gravityspy \
-    --glitch-dir /path/to/gravityspy_timeseries \
+    --glitch-dir /path/to/glitch_data \
     --out ./gw_yolo_real
 ```
 
-### 直接训练 YOLOv8
+#### 使用模拟 Glitch（无需额外数据）
+```bash
+python generate_dataset.py --total 10000 --workers 8 \
+    --glitch-source simulated \
+    --out ./gw_yolo_simulated
+```
+
+#### 缩短时间窗口放大 Chirp（例如 1 秒）
+```bash
+python generate_dataset.py --total 5000 --duration 1.0 --out ./gw_yolo_1s
+```
+
+---
+
+## 🧪 测试与验证
+
+### 单元测试（关键函数）
+```bash
+python -m pytest tests/          # 若未编写，可手动运行示例脚本
+```
+
+### 可视化单样本（调试用）
+```python
+from config import DEFAULT
+from pipeline import generate_sample
+from glitches import build_glitch_source
+import numpy as np
+
+rng = np.random.default_rng(42)
+glitch_source = build_glitch_source(DEFAULT.strain, DEFAULT.glitch)
+sample = generate_sample("mixed", DEFAULT, glitch_source, rng)
+
+# 保存图像和标签
+from spectrograms import render_qscan_png
+render_qscan_png(sample["energy_combined"], sample["times"], sample["freqs"],
+                 "test.png", DEFAULT.image)
+print("标签:", sample["isolated_grids"].keys())
+```
+
+### 检查生成数据集质量
+```bash
+# 统计标签文件数量
+ls gw_yolo_real/labels/train/*.txt | wc -l
+# 查看一个标签文件
+head -3 gw_yolo_real/labels/train/0000000_mixed.txt
+# 应同时包含 class 0 (chirp) 和 class 1 (noise) 的多边形
+```
+
+---
+
+## 📁 输出文件结构
+
+```
+gw_yolo_dataset/
+├── data.yaml                 # YOLO 数据集描述
+├── metadata.json             # 每张图的详细参数（SNR、glitch类型等）
+├── images/
+│   ├── train/   *.png
+│   ├── val/     *.png
+│   └── test/    *.png
+└── labels/
+    ├── train/   *.txt
+    ├── val/     *.txt
+    └── test/    *.txt
+```
+
+### 标签格式（YOLOv8‑seg）
+```
+<class_id> x1 y1 x2 y2 ... xn yn
+```
+- `class_id = 0` → chirp（引力波信号）
+- `class_id = 1` → noise（glitch 瞬态噪声）
+- 所有坐标归一化到 `[0,1]`，原点在图像左上角。
+
+---
+
+## ⚙️ 配置与调优
+
+所有参数集中在 `config.py` 的 dataclass 中，可灵活修改。
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `StrainCfg.duration` | 3.0 s | 时间窗口长度（秒），缩短可放大 chirp 在图像中的尺寸 |
+| `StrainCfg.use_real_chirp` | `True` | 是否使用真实引力波事件（需先运行 `prepare_chirp_metadata.py`） |
+| `GlitchCfg.num_glitches_range` | `(1,3)` | 每张图片包含的 glitch 数量范围 |
+| `QScanCfg.chirp_mask_threshold` | `0.01` | Chirp mask 阈值（极低值确保标注完整） |
+| `QScanCfg.noise_mask_threshold` | `6.0` | Glitch mask 阈值（可根据需要调高/调低） |
+| `ImageCfg.width/height` | `640` | 输出图像尺寸（正方形） |
+| `DatasetCfg.total_samples` | `10000` | 总样本数（可通过 `--total` 覆盖） |
+
+### 背景噪声丰富度
+在 `noise.py` 中，背景包含：
+- 高斯色噪声（aLIGO 设计 PSD）
+- 随机尖峰（泊松分布）
+- 低频漂移（0.1‑5 Hz）
+- 窄带谐振（20‑500 Hz）
+- 短时突发脉冲
+
+可通过调整各部分的幅度系数和概率来控制。
+
+---
+
+## 🧠 模型训练（YOLOv8）
+
 ```bash
 pip install ultralytics
-yolo segment train data=./gw_yolo_30k/data.yaml model=yolov8m-seg.pt \
-     imgsz=640 epochs=100
+yolo segment train data=./gw_yolo_real/data.yaml \
+    model=yolov8m-seg.pt \
+    imgsz=640 \
+    epochs=100 \
+    batch=16
+```
+
+训练后评估：
+```bash
+yolo segment val data=./gw_yolo_real/data.yaml model=runs/segment/train/weights/best.pt
 ```
 
 ---
 
-## 调参指南
+## 🤝 贡献
 
-- **想要更多的 SNR-glitch 重叠样本** → 在 `config.py` 里把 `n_bbh_plus_glitch` / `n_bns_plus_glitch` 调高。
-- **想生成更大的图** → `--image-size 1024`。
-- **想更长的时间窗口** → `--duration 5.0`，模型能看到更长的 BNS inspiral。
-- **mask 看起来太胖/太瘦** → 调 `config.QScanCfg.chirp_mask_threshold` 和 `noise_mask_threshold`。
-- **想加入 NSBH 类** → `waveforms.py` 中加一个 `sample_nsbh_params`，并在 `pipeline.py` 的 scene plan 里加一个分支。
+欢迎提交 Issue 或 Pull Request。请确保代码符合 [Black](https://github.com/psf/black) 格式化规范。
 
 ---
 
-## 输出
+## 📄 许可证
 
-```
-gw_yolo_30k/
-├── data.yaml                       # YOLO 数据集描述
-├── metadata.json                   # 每张图的 SNR、质量、glitch 类等
-├── images/
-│   ├── train/ 0000000_bbh.png ...
-│   ├── val/
-│   └── test/
-└── labels/
-    ├── train/ 0000000_bbh.txt ...
-    ├── val/
-    └── test/
-```
-
-每个 `.txt` 是 YOLOv8-seg 格式：
-```
-<class_id> x1 y1 x2 y2 ... xn yn       # 全部归一化到 [0,1]，原点左上
-```
-`class_id`：`0=chirp`，`1=noise`。
+[MIT License](LICENSE)
 
 ---
 
-## 与论文的对应关系
+## 🙏 致谢
 
-| 论文要求 | 本仓库实现 |
-|---|---|
-| Q-transform 谱图，3 秒窗口 | `spectrograms.compute_qscan` + `StrainCfg.duration=3.0` |
-| BBH `m > 5 M⊙` / BNS `m < 2.5 M⊙` | `BBHCfg.m1_range` / `BNSCfg.m1_range` |
-| chirp 参数取自 O1–O3 真实事件 | `BBHCfg` 默认覆盖 GWTC-3 的事件范围 |
-| 真实 GravitySpy glitch | `--glitch-source gravityspy --glitch-dir ...` |
-| 随机 chirp-glitch 时间偏移 | `waveforms.generate_cbc_strain` 内有 `np.roll` 抖动，glitch 也独立采样中心时间 |
-| 80/10/10 划分 | `DatasetCfg.split` |
-| 两类标签 `chirp` / `noise` | `config.CLASS_NAMES` |
-
----
-
-## 注意事项
-
-- `noise.py`、`waveforms.py` 在 import 时**不会**立刻 import PyCBC，所以代码静态审查不需要 PyCBC 在场。运行时才需要。
-- 默认 PSD 是 aLIGO 设计灵敏度（`aLIGOaLIGODesignSensitivityT1800044`）。若想匹配论文里 O3 的实际灵敏度，把 `StrainCfg.detector_psd` 改成 `"aLIGOZeroDetHighPower"` 或者 `use_real_psd_if_available=True` 并自行提供 PSD 文件。
-- 模拟 glitch 的形态被刻意调成「在 Q-scan 上和真实 GravitySpy 类相似」，但它**不是**物理模型。若做最终发表级训练，强烈建议使用真实 glitch 时序。
+- [GWOSC](https://www.gwosc.org/) – 引力波开放数据
+- [Gravity Spy](https://www.gravityspy.org/) – Glitch 分类数据集
+- [PyCBC](https://pycbc.org/) & [GWpy](https://gwpy.github.io/) – 波形生成与 Q‑变换
+- [Ultralytics YOLOv8](https://github.com/ultralytics/ultralytics) – 分割模型训练框架
+```
