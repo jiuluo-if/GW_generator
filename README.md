@@ -1,5 +1,3 @@
-以下是完全符合 GitHub 风格的 `README.md` 文件内容，已使用标准 Markdown 语法，并增加了细节和可读性。
-
 ```markdown
 # GW-YOLO Synthetic Data Generator
 
